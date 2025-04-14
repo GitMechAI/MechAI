@@ -1,14 +1,12 @@
-# mechanical_assistant.py
 import os
 import httpx
 import streamlit as st
 from datetime import datetime
 from typing import List, Dict
 from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate  # 修改1：更新导入路径
+from langchain_core.prompts import ChatPromptTemplate  # 关键修复点
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
-
 
 # --------------------------
 # 数据模型定义
@@ -18,42 +16,27 @@ class MechanicalDesign(BaseModel):
     materials: Dict[str, str] = Field(description="材料性能参数")
     parameters: Dict[str, float] = Field(description="关键设计参数")
 
-
 # --------------------------
-# 模型处理链
+# 模型处理链（兼容版本配置）
 # --------------------------
 def create_llm_chain(api_key: str, proxy_url: str = None):
-    """创建可配置代理的模型链"""
+    """创建兼容旧版OpenAI客户端的处理链"""
     client_params = {
         "model": "moonshot-v1-8k",
         "openai_api_key": api_key,
         "openai_api_base": "https://api.moonshot.cn/v1",
-        "temperature": 0.7
+        "temperature": 0.7,
+        "max_retries": 3  # 增加重试机制
     }
 
+    # 旧版代理配置方式
     if proxy_url:
-        client_params["http_client"] = httpx.Client(
-            proxies=proxy_url,
-            transport=httpx.HTTPTransport(retries=3)
-        )
-
-    llm = ChatOpenAI( ** client_params)  # 关键修复点：正确解包参数
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """作为机械设计专家，请完成：
-1. 根据{standard}标准分析需求
-2. 推荐材料并验证力学性能
-3. 输出三维方案框架
-
-{format_instructions}"""),
-        ("human", "设计需求：{requirement}")
-    ])
-
-    return prompt | llm | PydanticOutputParser(pydantic_object=MechanicalDesign)
-
+        client_params["openai_proxy"] = proxy_url  # 关键修复点
+    
+    return ChatOpenAI(​**​client_params)
 
 # --------------------------
-# 交互界面
+# Streamlit交互界面
 # --------------------------
 def main():
     st.set_page_config(page_title="智能机械设计平台", layout="wide", page_icon="⚙️")
@@ -65,14 +48,12 @@ def main():
     # 侧边栏设置
     with st.sidebar:
         st.header("🔑 配置中心")
-
-        # API密钥输入
         api_key = st.text_input("Moonshot API密钥", type="password")
-
+        
         # 公式手册跳转
         if st.button("📚 公式手册"):
-            st.session_state.show_manual = True
-
+            st.markdown("[点击查看机械设计手册](https://www.mechtool.cn/)", unsafe_allow_html=True)
+        
         # 代理设置
         use_proxy = st.checkbox("启用代理")
         proxy_url = st.text_input("代理地址", "http://127.0.0.1:7890") if use_proxy else None
@@ -80,17 +61,13 @@ def main():
         # 历史记录
         st.divider()
         st.header("📜 方案历史")
-        for item in reversed(st.session_state.history[-5:]):
+        for item in reversed(st.session_state.history[-3:]):
             st.caption(f"{item['time']}")
             st.code(item["summary"], language="json")
 
-    # 公式手册跳转逻辑
-    if st.session_state.get("show_manual"):
-        st.markdown("[点击查看完整公式手册](https://www.mechtool.cn/index.html)", unsafe_allow_html=True)
-
     # 主界面
     st.title("🔧 智能机械设计系统")
-
+    
     # 输入区域
     with st.form(key="design_form"):
         requirement = st.text_area(
@@ -99,7 +76,7 @@ def main():
             placeholder="例：需要设计承载5吨的液压升降平台，升降行程2米...",
             help="包含功能需求和技术参数"
         )
-
+        
         col1, col2 = st.columns(2)
         with col1:
             standard = st.selectbox("设计标准", ["GB", "ISO", "ASME"], index=0)
@@ -111,7 +88,7 @@ def main():
         if not requirement.strip():
             st.error("⚠️ 请输入设计需求内容")
             st.stop()
-
+            
         if not api_key:
             st.error("⚠️ 请先输入有效的API密钥")
             st.stop()
@@ -121,8 +98,20 @@ def main():
                 # 创建处理链
                 chain = create_llm_chain(api_key, proxy_url)
                 parser = PydanticOutputParser(pydantic_object=MechanicalDesign)
+                
+                # 构建提示模板
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """作为机械设计专家，需要完成：
+1. 根据{standard}标准分析需求
+2. 推荐材料并验证力学性能
+3. 输出三维方案框架
 
+{format_instructions}"""),
+                    ("human", "设计需求：{requirement}")
+                ])
+                
                 # 执行链式调用
+                chain = prompt | chain | parser
                 result = chain.invoke({
                     "standard": standard,
                     "requirement": requirement,
@@ -143,22 +132,20 @@ def main():
     # 显示结果
     if "current_result" in st.session_state:
         result = st.session_state.current_result
-
-        # 结果展示
+        
         with st.expander("📋 设计方案详情", expanded=True):
-            col1, col2 = st.columns(2)
-
+            col1, col2 = st.columns([2, 3])
+            
             with col1:
                 st.subheader("🛠️ 组件清单")
                 st.table({"组件名称": result.components})
-
+                
                 st.subheader("🔩 推荐材料")
-                st.table({"材料名称": list(result.materials.keys())})
-
+                st.table(list(result.materials.items()))
+            
             with col2:
                 st.subheader("⚖️ 技术参数")
                 st.json(result.parameters, expanded=True)
-
 
 if __name__ == "__main__":
     main()
