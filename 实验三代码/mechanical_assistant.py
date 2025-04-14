@@ -1,11 +1,11 @@
-# mechanical_design_assistant.py
+# mechanical_assistant.py
 import os
 import httpx
 import streamlit as st
 from datetime import datetime
 from typing import List, Dict
 from pydantic import BaseModel, Field
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate  # 修改1：更新导入路径
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
 
